@@ -1,0 +1,36 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+pydantic-settings==2.15.0
+
+llama-index-core==0.14.23
+llama-index-llms-google-genai==0.9.6
+llama-index-embeddings-google-genai==0.5.1
+llama-index-llms-openai==0.7.10
+llama-index-embeddings-openai==0.6.0
+
+sqlalchemy==2.0.52
+sqlalchemy-bigquery==1.17.2
+google-cloud-bigquery==3.43.0
+google-cloud-bigquery-storage==2.40.0
+google-cloud-storage==3.13.1
+google-auth==2.56.3
+
+sqlglot==30.16.0
+
+redisvl==0.25.1
+redis==7.4.1
+
+python-dotenv==1.2.2
+
+# --- Feature store / anomaly engine ---
+pandas==3.0.5
+pandas-gbq==0.35.1
+db-dtypes==1.7.1
+numpy==2.4.6
+scikit-learn==1.9.0
+shap==0.51.0
+joblib==1.5.3
+
+# --- Data Governance Catalog (Dataplex + DLP) ---
+google-cloud-dlp==3.38.0

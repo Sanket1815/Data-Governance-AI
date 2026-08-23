@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.index_store/
+*.egg-info/
+.claude
+service-account.json
+*service-account*.json
+*.key.json
