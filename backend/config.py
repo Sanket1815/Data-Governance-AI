@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -115,9 +116,12 @@ def build_credentials(settings: Settings | None = None) -> Credentials | None:
 
     credentials_path = Path(settings.google_application_credentials)
     if not credentials_path.is_file():
-        raise FileNotFoundError(
-            f"GOOGLE_APPLICATION_CREDENTIALS points to a non-existent file: {credentials_path}"
+        # On Cloud Run the runtime service account provides ADC; a stale local path in env is common.
+        logging.getLogger(__name__).warning(
+            "GOOGLE_APPLICATION_CREDENTIALS points to a missing file (%s); using Application Default Credentials.",
+            credentials_path,
         )
+        return None
     return service_account.Credentials.from_service_account_file(str(credentials_path))
 
 

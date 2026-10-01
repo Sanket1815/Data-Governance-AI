@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -41,21 +42,19 @@ logger = logging.getLogger(__name__)
 
 
 class AppState:
-    settings: Settings
-    engine: NL2SQLEngine
-    cache_service: SemanticCacheService
-    bq_client: bigquery.Client
+    settings: Settings | None = None
+    engine: NL2SQLEngine | None = None
+    cache_service: SemanticCacheService | None = None
+    bq_client: bigquery.Client | None = None
     pipeline_running: bool = False
+    ready: bool = False
+    startup_error: str | None = None
 
 
 state = AppState()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    settings = get_settings()
-    state.settings = settings
-
+def _initialize_application(settings: Settings) -> None:
     configure_global_llama_settings(settings)
 
     bq_client = build_bigquery_client(settings)
@@ -80,9 +79,40 @@ async def lifespan(app: FastAPI):
     state.engine = NL2SQLEngine(object_index=object_index, sql_database=sql_database, settings=settings)
     state.cache_service = SemanticCacheService(settings=settings)
     state.bq_client = bq_client
-    state.pipeline_running = False
-
+    state.ready = True
     logger.info("NL2SQL engine initialized for dataset %s.%s", settings.gcp_project_id, settings.bigquery_dataset)
+
+
+def _require_ready() -> None:
+    if state.ready:
+        return
+    if state.startup_error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Service startup failed: {state.startup_error}",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Service is starting (loading schema index); retry in a minute.",
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    state.settings = settings
+    state.pipeline_running = False
+    state.ready = False
+    state.startup_error = None
+
+    async def _background_startup() -> None:
+        try:
+            await run_in_threadpool(_initialize_application, settings)
+        except Exception as exc:
+            logger.exception("Application startup failed.")
+            state.startup_error = str(exc)
+
+    asyncio.create_task(_background_startup())
     yield
     logger.info("Shutting down NL2SQL service.")
 
@@ -126,11 +156,19 @@ class QueryResponse(BaseModel):
 
 @app.get("/api/v1/health")
 async def health() -> dict[str, str]:
+    if state.startup_error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "failed", "error": state.startup_error},
+        )
+    if not state.ready:
+        return {"status": "starting"}
     return {"status": "ok"}
 
 
 @app.post("/api/v1/query", response_model=QueryResponse)
 async def run_query(request: QueryRequest) -> QueryResponse:
+    _require_ready()
     request_start = time.perf_counter()
 
     cached = await run_in_threadpool(state.cache_service.lookup, request.user_prompt)
@@ -274,6 +312,7 @@ def _run_pipeline_background(run_id: str) -> None:
 
 @app.post("/api/v1/pipeline/run", response_model=PipelineRunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def trigger_pipeline_run(background_tasks: BackgroundTasks) -> PipelineRunResponse:
+    _require_ready()
     if state.pipeline_running:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="A pipeline run is already in progress."
@@ -381,6 +420,7 @@ def _fetch_metrics() -> MetricsResponse:
 
 @app.get("/api/v1/metrics", response_model=MetricsResponse)
 async def get_metrics() -> MetricsResponse:
+    _require_ready()
     return await run_in_threadpool(_fetch_metrics)
 
 
@@ -462,6 +502,7 @@ async def get_claims_for_review(
     limit: int = 50,
     offset: int = 0,
 ) -> ClaimReviewResponse:
+    _require_ready()
     if review_status not in VALID_REVIEW_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -519,4 +560,5 @@ def _update_claim_status(claim_id: str, review_status: str) -> ClaimStatusUpdate
 
 @app.patch("/api/v1/claims/{claim_id}/status", response_model=ClaimStatusUpdateResponse)
 async def update_claim_status(claim_id: str, request: ClaimStatusUpdateRequest) -> ClaimStatusUpdateResponse:
+    _require_ready()
     return await run_in_threadpool(_update_claim_status, claim_id, request.review_status)

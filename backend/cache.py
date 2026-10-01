@@ -41,15 +41,24 @@ class SemanticCacheService:
     def __init__(self, settings: Settings | None = None, vectorizer: BaseVectorizer | None = None) -> None:
         self._settings = settings or get_settings()
         self._vectorizer = vectorizer or _build_default_vectorizer(self._settings)
-        self._cache = SemanticCache(
-            name="nl2sql_semantic_cache",
-            redis_url=self._settings.redis_url,
-            vectorizer=self._vectorizer,
-            distance_threshold=self._settings.semantic_cache_distance_threshold,
-            ttl=self._settings.redis_cache_ttl_seconds,
-        )
+        self._cache: SemanticCache | None = None
+        try:
+            self._cache = SemanticCache(
+                name="nl2sql_semantic_cache",
+                redis_url=self._settings.redis_url,
+                vectorizer=self._vectorizer,
+                distance_threshold=self._settings.semantic_cache_distance_threshold,
+                ttl=self._settings.redis_cache_ttl_seconds,
+            )
+        except Exception:
+            logger.warning(
+                "Semantic cache unavailable (check REDIS_URL and Redis Stack); continuing without cache.",
+                exc_info=True,
+            )
 
     def lookup(self, user_prompt: str) -> CachedQueryResult | None:
+        if self._cache is None:
+            return None
         try:
             matches = self._cache.check(prompt=user_prompt, num_results=1)
         except Exception:
@@ -81,10 +90,14 @@ class SemanticCacheService:
             },
             default=str,
         )
+        if self._cache is None:
+            return
         try:
             self._cache.store(prompt=user_prompt, response=payload)
         except Exception:
             logger.warning("Failed to write to semantic cache; continuing without caching this result.", exc_info=True)
 
     def clear(self) -> None:
+        if self._cache is None:
+            return
         self._cache.clear()
