@@ -316,6 +316,9 @@ async def list_tables(dataset: str = "healthcare_insurance") -> list[CatalogTabl
         entries = await run_in_threadpool(client.list_bigquery_entries, dataset)
     except CatalogClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("list_tables failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
     summaries = []
     for entry in entries:
@@ -799,7 +802,11 @@ async def revoke_column_reader(dataset: str, table: str, column: str, principal:
 @router.get("/approvals", response_model=list[PendingApprovalResponse])
 async def list_pending_approvals(dataset: str | None = None, table: str | None = None) -> list[PendingApprovalResponse]:
     queue = _get_approval_queue()
-    approvals = await run_in_threadpool(queue.list_pending, dataset, table)
+    try:
+        approvals = await run_in_threadpool(queue.list_pending, dataset, table)
+    except Exception as exc:
+        logger.exception("list_pending_approvals failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
     return [
         PendingApprovalResponse(
             approval_id=a.approval_id,

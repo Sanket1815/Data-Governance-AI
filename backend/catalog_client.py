@@ -9,7 +9,7 @@ from google.auth.transport.requests import AuthorizedSession
 from requests import Response
 from requests.exceptions import HTTPError
 
-from config import Settings, build_credentials, get_settings
+from config import Settings, get_settings, resolve_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -153,10 +153,8 @@ class DataplexCatalogClient:
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
-        credentials = build_credentials(self._settings)
-        if credentials is not None:
-            credentials = credentials.with_scopes([_CLOUD_PLATFORM_SCOPE])
-        self._session = AuthorizedSession(credentials) if credentials else AuthorizedSession(None)
+        credentials = resolve_credentials(self._settings).with_scopes([_CLOUD_PLATFORM_SCOPE])
+        self._session = AuthorizedSession(credentials)
         self._project_id = self._settings.gcp_project_id
         self._location = self._settings.dataplex_location
         self._entry_group = self._settings.dataplex_entry_group

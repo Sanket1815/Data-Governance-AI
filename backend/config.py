@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+import google.auth
 from google.auth.credentials import Credentials
 from google.cloud import bigquery
 from google.oauth2 import service_account
@@ -125,7 +126,15 @@ def build_credentials(settings: Settings | None = None) -> Credentials | None:
     return service_account.Credentials.from_service_account_file(str(credentials_path))
 
 
+def resolve_credentials(settings: Settings | None = None) -> Credentials:
+    """Service-account file from settings when present; otherwise Cloud Run / gcloud ADC."""
+    file_credentials = build_credentials(settings)
+    if file_credentials is not None:
+        return file_credentials
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    return credentials
+
+
 def build_bigquery_client(settings: Settings | None = None) -> bigquery.Client:
     settings = settings or get_settings()
-    credentials = build_credentials(settings)
-    return bigquery.Client(project=settings.gcp_project_id, credentials=credentials)
+    return bigquery.Client(project=settings.gcp_project_id, credentials=resolve_credentials(settings))
