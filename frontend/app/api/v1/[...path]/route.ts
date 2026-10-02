@@ -4,10 +4,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 function backendOrigin(): string {
-  const raw =
-    process.env.BACKEND_URL ||
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "http://localhost:8000";
+  // Use BACKEND_URL only — NEXT_PUBLIC_* is inlined at `next build` and ignores Cloud Run runtime env.
+  const raw = process.env.BACKEND_URL || "http://localhost:8000";
   return raw.trim().replace(/^["']|["']$/g, "").replace(/\/$/, "");
 }
 
@@ -31,15 +29,41 @@ function buildForwardHeaders(request: NextRequest): Headers {
   return headers;
 }
 
+/** When the backend Cloud Run service requires authentication, call with an ID token. */
+async function cloudRunIdToken(audience: string): Promise<string | null> {
+  if (!audience.includes(".run.app")) {
+    return null;
+  }
+  try {
+    const res = await fetch(
+      `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(audience)}`,
+      { headers: { "Metadata-Flavor": "Google" } },
+    );
+    if (!res.ok) {
+      return null;
+    }
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
 async function proxyRequest(request: NextRequest, pathSegments: string[] | undefined): Promise<NextResponse> {
+  const origin = backendOrigin();
   const segments = pathSegments ?? [];
   const subpath = segments.join("/");
-  const target = `${backendOrigin()}/api/v1/${subpath}${request.nextUrl.search}`;
+  const target = `${origin}/api/v1/${subpath}${request.nextUrl.search}`;
 
   try {
+    const headers = buildForwardHeaders(request);
+    const idToken = await cloudRunIdToken(origin);
+    if (idToken) {
+      headers.set("Authorization", `Bearer ${idToken}`);
+    }
+
     const init: RequestInit = {
       method: request.method,
-      headers: buildForwardHeaders(request),
+      headers,
       redirect: "manual",
       cache: "no-store",
     };
@@ -62,9 +86,14 @@ async function proxyRequest(request: NextRequest, pathSegments: string[] | undef
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown proxy error";
     console.error("API proxy failed:", target, message);
+    const missingBackend =
+      origin === "http://localhost:8000" || !process.env.BACKEND_URL?.trim();
     return NextResponse.json(
       {
-        detail: `API proxy could not reach backend (${message}). Check BACKEND_URL on the frontend Cloud Run service.`,
+        detail: missingBackend
+          ? "BACKEND_URL is not set on this Cloud Run revision (proxy defaulted to localhost). Add BACKEND_URL=https://data-governance-ai-....run.app and deploy."
+          : `API proxy could not reach backend (${message}).`,
+        resolvedBackend: origin,
         target,
       },
       { status: 502 },
