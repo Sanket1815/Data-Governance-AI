@@ -7,9 +7,12 @@ RUN npm ci
 
 COPY . .
 
-# Baked into the client bundle at build time (set in Cloud Build / Cloud Run deploy UI).
+# Set at Cloud Build / Cloud Run deploy (build-time). Use your backend Cloud Run URL, no trailing slash.
+# NEXT_PUBLIC_* → browser calls API directly (needs backend CORS). If unset, browser uses /api/v1 rewrites via BACKEND_URL.
 ARG NEXT_PUBLIC_API_BASE_URL
+ARG BACKEND_URL
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+ENV BACKEND_URL=$BACKEND_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npm run build
